@@ -41,9 +41,6 @@ class Game {
         this.bosses = [];
         this.xpGems = [];
 
-        // Grid system for enemy positioning
-        this.enemyGrid = [];
-
         this.ballTypes = new Map();
         this.playerUpgrades = {
             ballDamage: 1,
@@ -165,7 +162,6 @@ class Game {
         this.particles = [];
         this.powerups = [];
         this.xpGems = [];
-        this.enemyGrid = [];
         this.enemiesKilled = 0;
         this.waveEnemiesKilled = 0;
         document.getElementById('gameover-screen').classList.add('hidden');
@@ -279,27 +275,57 @@ class Game {
     }
 
     spawnEnemy() {
-        // Try to spawn an enemy using the grid system
+        // Try to spawn an enemy using grid-aligned positions
         const enemy = new Enemy(0, 0, this);
 
-        // Try to find a grid position for this enemy
-        const position = this.findAvailableGridPosition(enemy.gridWidth, enemy.gridHeight);
+        // Try multiple spawn positions
+        const maxAttempts = 20;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            // Pick a random column that fits the enemy width
+            const col = Math.floor(Math.random() * (CONFIG.gridColumns - enemy.gridWidth + 1));
 
-        if (position) {
-            // Set enemy's grid position
-            enemy.gridCol = position.col;
-            enemy.gridRow = position.row;
+            // Calculate screen position (spawning above the visible area)
+            const spawnX = col * CONFIG.gridCellSize + (enemy.gridWidth * CONFIG.gridCellSize) / 2;
+            const spawnY = -enemy.gridHeight * CONFIG.gridCellSize - 20;
 
-            // Calculate actual screen position
-            enemy.x = position.col * CONFIG.gridCellSize + (enemy.gridWidth * CONFIG.gridCellSize) / 2;
-            enemy.y = -enemy.gridHeight * CONFIG.gridCellSize; // Start above screen
-            enemy.targetY = position.row * CONFIG.gridCellSize + (enemy.gridHeight * CONFIG.gridCellSize) / 2;
+            // Check if this position would overlap with existing enemies
+            enemy.x = spawnX;
+            enemy.y = spawnY;
+            enemy.gridCol = col;
 
-            // Occupy grid cells
-            this.occupyGridCells(enemy);
-            this.enemies.push(enemy);
+            if (!this.checkEnemyOverlap(enemy)) {
+                // Safe to spawn here
+                this.enemies.push(enemy);
+                return;
+            }
         }
-        // If no position found, don't spawn (grid is full)
+        // If no position found after all attempts, don't spawn
+    }
+
+    checkEnemyOverlap(newEnemy) {
+        const newWidth = newEnemy.gridWidth * CONFIG.gridCellSize;
+        const newHeight = newEnemy.gridHeight * CONFIG.gridCellSize;
+        const newLeft = newEnemy.x - newWidth / 2;
+        const newRight = newEnemy.x + newWidth / 2;
+        const newTop = newEnemy.y - newHeight / 2;
+        const newBottom = newEnemy.y + newHeight / 2;
+
+        for (let enemy of this.enemies) {
+            const width = enemy.gridWidth * CONFIG.gridCellSize;
+            const height = enemy.gridHeight * CONFIG.gridCellSize;
+            const left = enemy.x - width / 2;
+            const right = enemy.x + width / 2;
+            const top = enemy.y - height / 2;
+            const bottom = enemy.y + height / 2;
+
+            // Check for rectangle overlap with some spacing buffer
+            const buffer = 5;
+            if (newLeft < right + buffer && newRight > left - buffer &&
+                newTop < bottom + buffer && newBottom > top - buffer) {
+                return true; // Overlap detected
+            }
+        }
+        return false; // No overlap
     }
 
     checkCollisions() {
@@ -458,9 +484,6 @@ class Game {
 
         this.createExplosion(enemy.x, enemy.y, enemy.color);
 
-        // Free up grid cells occupied by this enemy
-        this.freeGridCells(enemy);
-
         // Drop XP gems (always)
         const xpAmount = enemy.xpValue || 5;
         const gem = new XPGem(enemy.x, enemy.y, xpAmount, this);
@@ -471,6 +494,14 @@ class Game {
             const powerup = new Powerup(enemy.x, enemy.y, this);
             this.powerups.push(powerup);
         }
+    }
+
+    enemyReachedBottom(enemy) {
+        // Damage player when enemy reaches bottom
+        const damage = 20;
+        this.playerHP -= damage;
+        enemy.active = false;
+        this.createExplosion(enemy.x, enemy.y, '#ff0000');
     }
 
     collectXPGem(gem) {
@@ -651,64 +682,6 @@ class Game {
         document.getElementById('level').textContent = this.level;
         document.getElementById('score').textContent = this.score;
         document.getElementById('hp').textContent = Math.max(0, Math.floor(this.playerHP));
-    }
-
-    // Grid management for enemy positioning
-    occupyGridCells(enemy) {
-        const startCol = enemy.gridCol;
-        const startRow = enemy.gridRow;
-
-        for (let r = 0; r < enemy.gridHeight; r++) {
-            for (let c = 0; c < enemy.gridWidth; c++) {
-                const gridKey = `${startCol + c},${startRow + r}`;
-                this.enemyGrid.push(gridKey);
-            }
-        }
-    }
-
-    freeGridCells(enemy) {
-        const startCol = enemy.gridCol;
-        const startRow = enemy.gridRow;
-
-        for (let r = 0; r < enemy.gridHeight; r++) {
-            for (let c = 0; c < enemy.gridWidth; c++) {
-                const gridKey = `${startCol + c},${startRow + r}`;
-                const index = this.enemyGrid.indexOf(gridKey);
-                if (index > -1) {
-                    this.enemyGrid.splice(index, 1);
-                }
-            }
-        }
-    }
-
-    canPlaceEnemy(col, row, width, height) {
-        // Check if enemy would go out of bounds
-        if (col + width > CONFIG.gridColumns || col < 0) return false;
-
-        // Check if any of the cells are occupied
-        for (let r = 0; r < height; r++) {
-            for (let c = 0; c < width; c++) {
-                const gridKey = `${col + c},${row + r}`;
-                if (this.enemyGrid.includes(gridKey)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    findAvailableGridPosition(width, height) {
-        // Try to find a position for this enemy
-        const maxAttempts = 50;
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            const col = Math.floor(Math.random() * (CONFIG.gridColumns - width + 1));
-            const row = Math.floor(Math.random() * 3); // Keep enemies in top few rows
-
-            if (this.canPlaceEnemy(col, row, width, height)) {
-                return { col, row };
-            }
-        }
-        return null; // No position found
     }
 
     gameOver() {
@@ -1080,9 +1053,6 @@ class Enemy {
 
         // Grid position (will be set by spawn logic)
         this.gridCol = 0;
-        this.gridRow = 0;
-        this.targetY = 0;
-        this.inPosition = false;
 
         this.burning = false;
         this.burnTime = 0;
@@ -1112,17 +1082,15 @@ class Enemy {
             }
         }
 
-        // Move to target position, then stay there (like breakout blocks)
-        if (!this.inPosition) {
-            if (this.y < this.targetY) {
-                this.y += this.speed * speedMod * 3; // Move faster to position
-                if (this.y >= this.targetY) {
-                    this.y = this.targetY;
-                    this.inPosition = true;
-                }
-            }
+        // Continuously move down
+        this.y += this.speed * speedMod;
+
+        // Check if reached bottom
+        const height = this.gridHeight * CONFIG.gridCellSize;
+        if (this.y - height / 2 > CONFIG.canvasHeight) {
+            // Reached bottom - damage player
+            this.game.enemyReachedBottom(this);
         }
-        // Once in position, stay there (don't move down)
     }
 
     takeDamage(amount) {
@@ -1588,30 +1556,26 @@ class XPGem {
     }
 
     update() {
-        // Magnetic pull toward player
+        // Vacuum effect - only move when player is nearby
         if (this.game.player) {
             const dx = this.game.player.x - this.x;
             const dy = this.game.player.y - this.y;
             const distance = Math.sqrt(dx * dx + dy * dy);
 
             if (distance < this.magnetRange) {
-                // Pull toward player
-                const pullStrength = 0.2;
-                this.x += (dx / distance) * pullStrength * (this.magnetRange - distance) / 10;
-                this.y += (dy / distance) * pullStrength * (this.magnetRange - distance) / 10;
-            } else {
-                // Slow fall
-                this.y += this.speed;
+                // Strong pull toward player when in range
+                const pullStrength = 8;
+                const normalizedDx = dx / distance;
+                const normalizedDy = dy / distance;
+                this.x += normalizedDx * pullStrength;
+                this.y += normalizedDy * pullStrength;
             }
-        } else {
-            this.y += this.speed;
+            // Otherwise, stay stationary (no fall)
         }
 
         this.rotation += 0.15;
 
-        if (this.y > CONFIG.canvasHeight + this.radius) {
-            this.active = false;
-        }
+        // XP gems don't disappear off screen, they stay until collected
     }
 
     render(ctx) {

@@ -1,16 +1,18 @@
-// Ball Breaker - Roguelite Breakout Game
+// Ball Breaker - Roguelite Twin Stick Shooter
 // Game Configuration
 const CONFIG = {
     canvasWidth: 500,
     canvasHeight: 900,
     playerSize: 40,
-    playerSpeed: 12,
+    playerSpeed: 6,
+    playerBounce: 0.8,
     ballSize: 8,
     enemySize: 30,
     enemySpeed: 0.4,
-    ballFireRate: 250,
+    ballFireRate: 150,
     enemySpawnRate: 800,
     waveDuration: 30000,
+    bossInterval: 5, // Boss every 5 levels
 };
 
 // Game State
@@ -31,6 +33,7 @@ class Game {
         this.enemies = [];
         this.particles = [];
         this.powerups = [];
+        this.bosses = [];
 
         this.ballTypes = new Map();
         this.playerUpgrades = {
@@ -146,6 +149,7 @@ class Game {
         this.playerHP = this.maxHP;
         this.balls = [];
         this.enemies = [];
+        this.bosses = [];
         this.particles = [];
         this.powerups = [];
         this.enemiesKilled = 0;
@@ -168,11 +172,13 @@ class Game {
         if (this.player) {
             this.player.update();
 
-            // Auto-fire balls
-            const fireRate = CONFIG.ballFireRate / this.playerUpgrades.fireRate;
-            if (now - this.lastBallFire > fireRate) {
-                this.fireBall();
-                this.lastBallFire = now;
+            // Fire balls when aiming
+            if (this.player.isAiming) {
+                const fireRate = CONFIG.ballFireRate / this.playerUpgrades.fireRate;
+                if (now - this.lastBallFire > fireRate) {
+                    this.fireBall();
+                    this.lastBallFire = now;
+                }
             }
         }
 
@@ -193,6 +199,12 @@ class Game {
         this.enemies = this.enemies.filter(enemy => {
             enemy.update();
             return enemy.active;
+        });
+
+        // Update bosses
+        this.bosses = this.bosses.filter(boss => {
+            boss.update();
+            return boss.active;
         });
 
         // Update particles
@@ -229,7 +241,7 @@ class Game {
         const spreadAngle = Math.PI / 8;
 
         for (let i = 0; i < ballCount; i++) {
-            let angle = -Math.PI / 2; // Up
+            let angle = this.player.aimAngle;
 
             if (ballCount > 1) {
                 const offset = (i - (ballCount - 1) / 2) * spreadAngle;
@@ -238,7 +250,7 @@ class Game {
 
             const ball = new Ball(
                 this.player.x,
-                this.player.y - 20,
+                this.player.y,
                 angle,
                 this
             );
@@ -269,6 +281,12 @@ class Game {
                     this.handleBallEnemyCollision(ball, enemy);
                 }
             }
+            // Ball vs Boss
+            for (let boss of this.bosses) {
+                if (this.checkCircleCollision(ball, boss)) {
+                    this.handleBallEnemyCollision(ball, boss);
+                }
+            }
         }
 
         // Player vs Enemy
@@ -276,6 +294,13 @@ class Game {
             for (let enemy of this.enemies) {
                 if (this.checkCircleCollision(this.player, enemy)) {
                     this.handlePlayerEnemyCollision(enemy);
+                }
+            }
+
+            // Player vs Boss
+            for (let boss of this.bosses) {
+                if (this.checkCircleCollision(this.player, boss)) {
+                    this.handlePlayerEnemyCollision(boss);
                 }
             }
 
@@ -396,9 +421,20 @@ class Game {
     completeWave() {
         this.gameState = 'upgrade';
         this.level++;
+
+        // Spawn boss every 5 levels
+        if (this.level % CONFIG.bossInterval === 0) {
+            this.spawnBoss();
+        }
+
         this.waveStartTime = Date.now();
         this.waveEnemiesKilled = 0;
         this.showUpgradeMenu();
+    }
+
+    spawnBoss() {
+        const boss = new Boss(CONFIG.canvasWidth / 2, -100, this);
+        this.bosses.push(boss);
     }
 
     showUpgradeMenu() {
@@ -549,8 +585,12 @@ class Game {
         this.particles.forEach(p => p.render(this.ctx));
         this.powerups.forEach(p => p.render(this.ctx));
         this.enemies.forEach(e => e.render(this.ctx));
+        this.bosses.forEach(b => b.render(this.ctx));
         this.balls.forEach(b => b.render(this.ctx));
         if (this.player) this.player.render(this.ctx);
+
+        // Draw twin stick control zones (visual aid)
+        if (this.player) this.drawControlZones();
 
         // Draw wave progress
         this.drawWaveProgress();
@@ -604,6 +644,45 @@ class Game {
         this.ctx.textAlign = 'center';
         this.ctx.fillText('Wave Progress', CONFIG.canvasWidth / 2, y - 5);
     }
+
+    drawControlZones() {
+        const leftZone = this.inputHandler.leftStick;
+        const rightZone = this.inputHandler.rightStick;
+
+        this.ctx.globalAlpha = 0.2;
+
+        // Left stick (movement)
+        if (leftZone.active) {
+            this.ctx.fillStyle = '#4ecdc4';
+            this.ctx.beginPath();
+            this.ctx.arc(leftZone.baseX, leftZone.baseY, 60, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Direction indicator
+            this.ctx.globalAlpha = 0.5;
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.beginPath();
+            this.ctx.arc(leftZone.currentX, leftZone.currentY, 20, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
+        // Right stick (aiming)
+        if (rightZone.active) {
+            this.ctx.fillStyle = '#ff6b6b';
+            this.ctx.beginPath();
+            this.ctx.arc(rightZone.baseX, rightZone.baseY, 60, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Direction indicator
+            this.ctx.globalAlpha = 0.5;
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.beginPath();
+            this.ctx.arc(rightZone.currentX, rightZone.currentY, 20, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+
+        this.ctx.globalAlpha = 1;
+    }
 }
 
 // Player Class
@@ -614,34 +693,63 @@ class Player {
         this.radius = CONFIG.playerSize / 2;
         this.game = game;
         this.ballType = 'normal';
-        this.targetX = x;
-        this.targetY = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.moveAngle = 0;
+        this.aimAngle = -Math.PI / 2; // Default up
+        this.isMoving = false;
+        this.isAiming = false;
     }
 
     update() {
-        // Smooth movement towards target
-        const dx = this.targetX - this.x;
-        const dy = this.targetY - this.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
+        // Apply velocity
+        this.x += this.vx;
+        this.y += this.vy;
 
-        if (distance > 2) {
-            const speed = CONFIG.playerSpeed;
-            this.x += (dx / distance) * speed;
-            this.y += (dy / distance) * speed;
+        // Bounce off walls
+        if (this.x < this.radius) {
+            this.x = this.radius;
+            this.vx = -this.vx * CONFIG.playerBounce;
+        } else if (this.x > CONFIG.canvasWidth - this.radius) {
+            this.x = CONFIG.canvasWidth - this.radius;
+            this.vx = -this.vx * CONFIG.playerBounce;
         }
 
-        // Keep in bounds
-        this.x = Math.max(this.radius, Math.min(CONFIG.canvasWidth - this.radius, this.x));
-        this.y = Math.max(this.radius, Math.min(CONFIG.canvasHeight - this.radius, this.y));
+        if (this.y < this.radius) {
+            this.y = this.radius;
+            this.vy = -this.vy * CONFIG.playerBounce;
+        } else if (this.y > CONFIG.canvasHeight - this.radius) {
+            this.y = CONFIG.canvasHeight - this.radius;
+            this.vy = -this.vy * CONFIG.playerBounce;
+        }
+
+        // Apply friction
+        this.vx *= 0.85;
+        this.vy *= 0.85;
     }
 
-    moveTo(x, y) {
-        this.targetX = x;
-        this.targetY = y;
+    setMovement(dx, dy) {
+        if (dx !== 0 || dy !== 0) {
+            this.isMoving = true;
+            this.moveAngle = Math.atan2(dy, dx);
+            this.vx = dx * CONFIG.playerSpeed;
+            this.vy = dy * CONFIG.playerSpeed;
+        } else {
+            this.isMoving = false;
+        }
+    }
+
+    setAim(dx, dy) {
+        if (dx !== 0 || dy !== 0) {
+            this.isAiming = true;
+            this.aimAngle = Math.atan2(dy, dx);
+        } else {
+            this.isAiming = false;
+        }
     }
 
     render(ctx) {
-        // Draw player character
+        // Draw player character (gun turret style)
         ctx.fillStyle = '#4ecdc4';
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
@@ -652,11 +760,31 @@ class Player {
         ctx.lineWidth = 3;
         ctx.stroke();
 
-        // Draw directional indicator
-        ctx.fillStyle = '#ffffff';
+        // Draw gun barrel pointing in aim direction
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.arc(this.x, this.y - this.radius / 2, 5, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(this.x, this.y);
+        const barrelLength = this.radius * 1.5;
+        ctx.lineTo(
+            this.x + Math.cos(this.aimAngle) * barrelLength,
+            this.y + Math.sin(this.aimAngle) * barrelLength
+        );
+        ctx.stroke();
+
+        // Draw movement indicator (small circle)
+        if (this.isMoving) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.beginPath();
+            ctx.arc(
+                this.x + Math.cos(this.moveAngle) * this.radius * 0.7,
+                this.y + Math.sin(this.moveAngle) * this.radius * 0.7,
+                5,
+                0,
+                Math.PI * 2
+            );
+            ctx.fill();
+        }
     }
 }
 
@@ -725,26 +853,26 @@ class Enemy {
         this.radius = CONFIG.enemySize / 2;
         this.active = true;
 
-        // Random enemy type
+        // Random enemy type with increased tankiness
         const rand = Math.random();
         if (rand < 0.6) {
             this.type = 'normal';
-            this.hp = 2 + game.level;
+            this.hp = 5 + game.level * 2;
             this.maxHP = this.hp;
             this.color = '#ff6b6b';
             this.speed = CONFIG.enemySpeed;
             this.scoreValue = 10;
         } else if (rand < 0.85) {
             this.type = 'tank';
-            this.hp = 5 + game.level * 2;
+            this.hp = 12 + game.level * 4;
             this.maxHP = this.hp;
             this.color = '#845EC2';
             this.speed = CONFIG.enemySpeed * 0.5;
             this.scoreValue = 25;
-            this.radius *= 1.2;
+            this.radius *= 1.3;
         } else {
             this.type = 'fast';
-            this.hp = 1 + Math.floor(game.level / 2);
+            this.hp = 3 + game.level;
             this.maxHP = this.hp;
             this.color = '#00d9ff';
             this.speed = CONFIG.enemySpeed * 2;
@@ -797,102 +925,403 @@ class Enemy {
     }
 
     render(ctx) {
-        // Draw monster body
+        ctx.save();
+
+        // Monster shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y + this.radius * 1.5, this.radius * 1.2, this.radius * 0.3, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw monster body with tentacles/appendages
+        ctx.fillStyle = this.color;
+
+        // Tentacles/legs based on type
+        if (this.type === 'normal' || this.type === 'fast') {
+            // Draw squiggly tentacles
+            for (let i = 0; i < 3; i++) {
+                const angle = Math.PI / 2 + (i - 1) * 0.5;
+                const wobble = Math.sin(Date.now() / 200 + i) * 0.2;
+                ctx.beginPath();
+                ctx.moveTo(this.x, this.y + this.radius * 0.5);
+                ctx.quadraticCurveTo(
+                    this.x + Math.cos(angle + wobble) * this.radius,
+                    this.y + this.radius * 1.2,
+                    this.x + Math.cos(angle) * this.radius * 0.7,
+                    this.y + this.radius * 2
+                );
+                ctx.lineWidth = this.radius * 0.3;
+                ctx.strokeStyle = this.color;
+                ctx.stroke();
+            }
+        }
+
+        // Main body blob
+        const bodyWidth = this.radius * 1.4;
+        const bodyHeight = this.radius * 1.6;
         ctx.fillStyle = this.color;
         ctx.beginPath();
-
-        // Monster body (rounded rectangle-ish shape)
-        const bodyWidth = this.radius * 1.5;
-        const bodyHeight = this.radius * 1.8;
-
-        // Main body
         ctx.ellipse(this.x, this.y, bodyWidth, bodyHeight, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw monster eyes
-        ctx.fillStyle = '#ffffff';
-        const eyeSize = this.radius * 0.3;
-        const eyeOffset = this.radius * 0.4;
+        // Darker body segments for depth
+        ctx.fillStyle = this.type === 'tank' ? '#6b4ea0' : 'rgba(0, 0, 0, 0.2)';
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y + this.radius * 0.3, bodyWidth * 0.8, bodyHeight * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw scary eyes (glowing)
+        const eyeSize = this.radius * 0.35;
+        const eyeOffset = this.radius * 0.5;
+
+        // Eye glow
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#ffff00';
+        ctx.fillStyle = '#ffff00';
 
         // Left eye
         ctx.beginPath();
-        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.3, eyeSize, 0, Math.PI * 2);
+        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.4, eyeSize, 0, Math.PI * 2);
         ctx.fill();
 
         // Right eye
         ctx.beginPath();
-        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.3, eyeSize, 0, Math.PI * 2);
+        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.4, eyeSize, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw pupils
+        ctx.shadowBlur = 0;
+
+        // Evil pupils
         ctx.fillStyle = '#000000';
-        const pupilSize = eyeSize * 0.5;
-
+        const pupilSize = eyeSize * 0.4;
         ctx.beginPath();
-        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.3, pupilSize, 0, Math.PI * 2);
+        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.4, pupilSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.4, pupilSize, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.beginPath();
-        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.3, pupilSize, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw monster mouth/teeth
+        // Menacing mouth with sharp teeth
         ctx.fillStyle = '#000000';
         ctx.beginPath();
-        ctx.arc(this.x, this.y + this.radius * 0.3, this.radius * 0.4, 0, Math.PI);
+        ctx.ellipse(this.x, this.y + this.radius * 0.4, this.radius * 0.6, this.radius * 0.3, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw teeth
+        // Sharp triangular teeth
         ctx.fillStyle = '#ffffff';
-        const toothCount = 4;
-        const toothWidth = this.radius * 0.8 / toothCount;
+        const toothCount = this.type === 'tank' ? 6 : 5;
         for (let i = 0; i < toothCount; i++) {
-            const tx = this.x - this.radius * 0.4 + i * toothWidth;
-            const ty = this.y + this.radius * 0.3;
-            ctx.fillRect(tx, ty, toothWidth * 0.8, this.radius * 0.2);
+            const tx = this.x - this.radius * 0.5 + (i * this.radius / toothCount);
+            const ty = this.y + this.radius * 0.25;
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(tx + this.radius * 0.15, ty);
+            ctx.lineTo(tx + this.radius * 0.075, ty + this.radius * 0.3);
+            ctx.closePath();
+            ctx.fill();
         }
 
-        // Draw little horns/spikes for different types
+        // Horns/spikes for tank type
         if (this.type === 'tank') {
-            ctx.fillStyle = this.color;
-            // Left horn
-            ctx.beginPath();
-            ctx.moveTo(this.x - this.radius, this.y - this.radius);
-            ctx.lineTo(this.x - this.radius - 8, this.y - this.radius - 10);
-            ctx.lineTo(this.x - this.radius + 5, this.y - this.radius);
-            ctx.fill();
-
-            // Right horn
-            ctx.beginPath();
-            ctx.moveTo(this.x + this.radius, this.y - this.radius);
-            ctx.lineTo(this.x + this.radius + 8, this.y - this.radius - 10);
-            ctx.lineTo(this.x + this.radius - 5, this.y - this.radius);
-            ctx.fill();
+            ctx.fillStyle = '#6b4ea0';
+            const hornCount = 3;
+            for (let i = 0; i < hornCount; i++) {
+                const angle = -Math.PI + (i * Math.PI / (hornCount - 1));
+                const hx = this.x + Math.cos(angle) * this.radius * 0.9;
+                const hy = this.y + Math.sin(angle) * this.radius * 1.3;
+                ctx.beginPath();
+                ctx.moveTo(hx, hy);
+                ctx.lineTo(hx + Math.cos(angle) * this.radius * 0.5, hy + Math.sin(angle) * this.radius * 0.5 - this.radius * 0.3);
+                ctx.lineTo(hx + Math.cos(angle + 0.3) * this.radius * 0.3, hy + Math.sin(angle + 0.3) * this.radius * 0.3);
+                ctx.closePath();
+                ctx.fill();
+            }
         }
 
-        // Draw HP bar
+        // Speed lines for fast type
+        if (this.type === 'fast') {
+            ctx.strokeStyle = 'rgba(0, 217, 255, 0.5)';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(this.x - this.radius - i * 5, this.y - 10 + i * 8);
+                ctx.lineTo(this.x - this.radius - 15 - i * 5, this.y - 10 + i * 8);
+                ctx.stroke();
+            }
+        }
+
+        // HP bar
         const barWidth = this.radius * 2.5;
-        const barHeight = 4;
+        const barHeight = 5;
         const hpPercent = this.hp / this.maxHP;
 
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2 - 5, barWidth, barHeight);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2.2, barWidth, barHeight);
 
-        ctx.fillStyle = '#00ff00';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2 - 5, barWidth * hpPercent, barHeight);
+        const hpColor = hpPercent > 0.5 ? '#00ff00' : hpPercent > 0.25 ? '#ffff00' : '#ff0000';
+        ctx.fillStyle = hpColor;
+        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2.2, barWidth * hpPercent, barHeight);
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(this.x - barWidth / 2, this.y - this.radius * 2.2, barWidth, barHeight);
 
         // Status effect indicators
         if (this.burning) {
-            ctx.fillStyle = '#ff6b6b';
-            ctx.font = '16px Arial';
-            ctx.fillText('🔥', this.x - 8, this.y - this.radius * 2 - 10);
+            ctx.font = '18px Arial';
+            ctx.fillText('🔥', this.x - this.radius - 10, this.y - this.radius * 2.3);
         }
 
         if (this.slowed) {
-            ctx.fillStyle = '#4ecdc4';
-            ctx.font = '16px Arial';
-            ctx.fillText('❄️', this.x + 8, this.y - this.radius * 2 - 10);
+            ctx.font = '18px Arial';
+            ctx.fillText('❄️', this.x + this.radius - 5, this.y - this.radius * 2.3);
         }
+
+        ctx.restore();
+    }
+}
+
+// Boss Class
+class Boss {
+    constructor(x, y, game) {
+        this.x = x;
+        this.y = y;
+        this.game = game;
+        this.radius = CONFIG.enemySize * 3;
+        this.active = true;
+        this.type = 'boss';
+
+        // Boss stats scale with level
+        this.hp = 50 + game.level * 20;
+        this.maxHP = this.hp;
+        this.color = '#9b59b6';
+        this.speed = CONFIG.enemySpeed * 0.3;
+        this.scoreValue = 500;
+
+        // Boss movement pattern
+        this.phase = 0;
+        this.phaseTimer = 0;
+        this.targetX = x;
+        this.vx = 0;
+        this.vy = 1;
+
+        this.burning = false;
+        this.burnTime = 0;
+        this.slowed = false;
+        this.slowTime = 0;
+    }
+
+    update() {
+        // Boss movement AI
+        this.phaseTimer++;
+
+        // Move down until in screen, then start pattern
+        if (this.y < 150) {
+            this.y += this.vy;
+        } else {
+            // Horizontal movement pattern
+            if (this.phaseTimer > 120) {
+                this.phaseTimer = 0;
+                this.targetX = this.radius + Math.random() * (CONFIG.canvasWidth - this.radius * 2);
+            }
+
+            const dx = this.targetX - this.x;
+            this.vx = dx * 0.02;
+            this.x += this.vx;
+
+            // Slight vertical wobble
+            this.y += Math.sin(Date.now() / 500) * 0.5;
+        }
+
+        // Apply status effects
+        let speedMod = 1;
+
+        if (this.burning) {
+            if (Date.now() - this.burnTime > 3000) {
+                this.burning = false;
+            } else {
+                if (Date.now() - this.burnTime > 500 && (Date.now() - this.burnTime) % 500 < 16) {
+                    this.takeDamage(1);
+                }
+            }
+        }
+
+        if (this.slowed) {
+            if (Date.now() - this.slowTime > 2000) {
+                this.slowed = false;
+            } else {
+                speedMod = 0.5;
+            }
+        }
+
+        // Keep in bounds
+        this.x = Math.max(this.radius, Math.min(CONFIG.canvasWidth - this.radius, this.x));
+        this.y = Math.max(this.radius, Math.min(CONFIG.canvasHeight / 3, this.y));
+    }
+
+    takeDamage(amount) {
+        this.hp -= amount;
+        if (this.hp <= 0) {
+            this.active = false;
+        }
+    }
+
+    render(ctx) {
+        ctx.save();
+
+        // Boss shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y + this.radius * 1.8, this.radius * 1.5, this.radius * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Pulsating aura
+        const pulseSize = this.radius + Math.sin(Date.now() / 200) * 10;
+        ctx.fillStyle = 'rgba(155, 89, 182, 0.2)';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, pulseSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Main body
+        const bodyWidth = this.radius * 1.6;
+        const bodyHeight = this.radius * 1.8;
+
+        // Dark core
+        ctx.fillStyle = '#6c3483';
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, bodyWidth * 0.7, bodyHeight * 0.7, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Main body
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y, bodyWidth, bodyHeight, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Multiple glowing eyes
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = '#ff0000';
+        ctx.fillStyle = '#ff0000';
+
+        const eyePositions = [
+            [-this.radius * 0.5, -this.radius * 0.6],
+            [this.radius * 0.5, -this.radius * 0.6],
+            [0, -this.radius * 0.3],
+        ];
+
+        for (const [ex, ey] of eyePositions) {
+            ctx.beginPath();
+            ctx.arc(this.x + ex, this.y + ey, this.radius * 0.25, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Pupils
+            ctx.fillStyle = '#000000';
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(this.x + ex, this.y + ey, this.radius * 0.1, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#ff0000';
+            ctx.fillStyle = '#ff0000';
+        }
+
+        ctx.shadowBlur = 0;
+
+        // Giant mouth
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y + this.radius * 0.5, this.radius * 0.9, this.radius * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Many sharp teeth
+        ctx.fillStyle = '#ffffff';
+        for (let i = 0; i < 10; i++) {
+            const tx = this.x - this.radius * 0.8 + (i * this.radius * 0.18);
+            const ty = this.y + this.radius * 0.3;
+            ctx.beginPath();
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(tx + this.radius * 0.12, ty);
+            ctx.lineTo(tx + this.radius * 0.06, ty + this.radius * 0.4);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Horns/spikes all around
+        ctx.fillStyle = '#6c3483';
+        const spikeCount = 8;
+        for (let i = 0; i < spikeCount; i++) {
+            const angle = (Math.PI * 2 * i) / spikeCount;
+            const sx = this.x + Math.cos(angle) * this.radius;
+            const sy = this.y + Math.sin(angle) * this.radius * 1.3;
+
+            ctx.beginPath();
+            ctx.moveTo(sx, sy);
+            ctx.lineTo(
+                sx + Math.cos(angle) * this.radius * 0.6,
+                sy + Math.sin(angle) * this.radius * 0.6
+            );
+            const perpAngle = angle + Math.PI / 2;
+            ctx.lineTo(
+                sx + Math.cos(perpAngle) * this.radius * 0.15,
+                sy + Math.sin(perpAngle) * this.radius * 0.15
+            );
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Tentacles
+        for (let i = 0; i < 4; i++) {
+            const angle = Math.PI / 2 + (i - 1.5) * 0.6;
+            const wobble = Math.sin(Date.now() / 150 + i) * 0.3;
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = this.radius * 0.4;
+            ctx.beginPath();
+            ctx.moveTo(this.x, this.y + this.radius);
+            ctx.quadraticCurveTo(
+                this.x + Math.cos(angle + wobble) * this.radius * 1.5,
+                this.y + this.radius * 2,
+                this.x + Math.cos(angle) * this.radius,
+                this.y + this.radius * 3
+            );
+            ctx.stroke();
+        }
+
+        // HP bar
+        const barWidth = this.radius * 3;
+        const barHeight = 8;
+        const hpPercent = this.hp / this.maxHP;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2.5, barWidth, barHeight);
+
+        // Color gradient based on HP
+        const hpColor = hpPercent > 0.5 ? '#00ff00' : hpPercent > 0.25 ? '#ffff00' : '#ff0000';
+        ctx.fillStyle = hpColor;
+        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2.5, barWidth * hpPercent, barHeight);
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(this.x - barWidth / 2, this.y - this.radius * 2.5, barWidth, barHeight);
+
+        // Boss label
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('BOSS', this.x, this.y - this.radius * 2.8);
+
+        // Status indicators
+        if (this.burning) {
+            ctx.font = '20px Arial';
+            ctx.fillText('🔥', this.x - this.radius - 15, this.y - this.radius * 2.5);
+        }
+
+        if (this.slowed) {
+            ctx.font = '20px Arial';
+            ctx.fillText('❄️', this.x + this.radius + 15, this.y - this.radius * 2.5);
+        }
+
+        ctx.restore();
     }
 }
 
@@ -982,45 +1411,226 @@ class Particle {
     }
 }
 
-// Input Handler
+// Input Handler - Twin Stick Controls
 class InputHandler {
     constructor(game) {
         this.game = game;
+
+        // Left stick for movement
+        this.leftStick = {
+            active: false,
+            baseX: 0,
+            baseY: 0,
+            currentX: 0,
+            currentY: 0,
+            touchId: null
+        };
+
+        // Right stick for aiming
+        this.rightStick = {
+            active: false,
+            baseX: 0,
+            baseY: 0,
+            currentX: 0,
+            currentY: 0,
+            touchId: null
+        };
+
         this.setupListeners();
     }
 
     setupListeners() {
-        // Mouse input
-        this.game.canvas.addEventListener('mousemove', (e) => {
-            this.handleInput(e.clientX, e.clientY);
-        });
-
-        this.game.canvas.addEventListener('click', (e) => {
-            this.handleInput(e.clientX, e.clientY);
-        });
-
-        // Touch input
-        this.game.canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            const touch = e.touches[0];
-            this.handleInput(touch.clientX, touch.clientY);
-        }, { passive: false });
-
+        // Touch input for mobile
         this.game.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            const touch = e.touches[0];
-            this.handleInput(touch.clientX, touch.clientY);
+            this.handleTouchStart(e);
         }, { passive: false });
+
+        this.game.canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            this.handleTouchMove(e);
+        }, { passive: false });
+
+        this.game.canvas.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            this.handleTouchEnd(e);
+        }, { passive: false });
+
+        // Mouse input for desktop (simulate twin stick)
+        let mouseDown = false;
+        this.game.canvas.addEventListener('mousedown', (e) => {
+            mouseDown = true;
+            this.handleMouseInput(e, true);
+        });
+
+        this.game.canvas.addEventListener('mousemove', (e) => {
+            if (mouseDown) {
+                this.handleMouseInput(e, false);
+            }
+        });
+
+        this.game.canvas.addEventListener('mouseup', (e) => {
+            mouseDown = false;
+            this.resetSticks();
+        });
+
+        this.game.canvas.addEventListener('mouseleave', (e) => {
+            mouseDown = false;
+            this.resetSticks();
+        });
     }
 
-    handleInput(clientX, clientY) {
+    handleTouchStart(e) {
         if (this.game.gameState !== 'playing' || !this.game.player) return;
 
         const rect = this.game.canvas.getBoundingClientRect();
-        const x = (clientX - rect.left) * this.game.scale.x;
-        const y = (clientY - rect.top) * this.game.scale.y;
 
-        this.game.player.moveTo(x, y);
+        for (let touch of e.touches) {
+            const x = (touch.clientX - rect.left) * this.game.scale.x;
+            const y = (touch.clientY - rect.top) * this.game.scale.y;
+
+            // Left side = movement, Right side = aiming
+            if (x < CONFIG.canvasWidth / 2) {
+                if (!this.leftStick.active) {
+                    this.leftStick.active = true;
+                    this.leftStick.touchId = touch.identifier;
+                    this.leftStick.baseX = x;
+                    this.leftStick.baseY = y;
+                    this.leftStick.currentX = x;
+                    this.leftStick.currentY = y;
+                }
+            } else {
+                if (!this.rightStick.active) {
+                    this.rightStick.active = true;
+                    this.rightStick.touchId = touch.identifier;
+                    this.rightStick.baseX = x;
+                    this.rightStick.baseY = y;
+                    this.rightStick.currentX = x;
+                    this.rightStick.currentY = y;
+                }
+            }
+        }
+
+        this.updatePlayer();
+    }
+
+    handleTouchMove(e) {
+        if (this.game.gameState !== 'playing' || !this.game.player) return;
+
+        const rect = this.game.canvas.getBoundingClientRect();
+
+        for (let touch of e.touches) {
+            const x = (touch.clientX - rect.left) * this.game.scale.x;
+            const y = (touch.clientY - rect.top) * this.game.scale.y;
+
+            // Update left stick
+            if (this.leftStick.active && touch.identifier === this.leftStick.touchId) {
+                this.leftStick.currentX = x;
+                this.leftStick.currentY = y;
+            }
+
+            // Update right stick
+            if (this.rightStick.active && touch.identifier === this.rightStick.touchId) {
+                this.rightStick.currentX = x;
+                this.rightStick.currentY = y;
+            }
+        }
+
+        this.updatePlayer();
+    }
+
+    handleTouchEnd(e) {
+        const touchIds = Array.from(e.touches).map(t => t.identifier);
+
+        // Check if left stick touch ended
+        if (this.leftStick.active && !touchIds.includes(this.leftStick.touchId)) {
+            this.leftStick.active = false;
+            this.leftStick.touchId = null;
+        }
+
+        // Check if right stick touch ended
+        if (this.rightStick.active && !touchIds.includes(this.rightStick.touchId)) {
+            this.rightStick.active = false;
+            this.rightStick.touchId = null;
+        }
+
+        this.updatePlayer();
+    }
+
+    handleMouseInput(e, isStart) {
+        if (this.game.gameState !== 'playing' || !this.game.player) return;
+
+        const rect = this.game.canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * this.game.scale.x;
+        const y = (e.clientY - rect.top) * this.game.scale.y;
+
+        // Use player position as base for both sticks
+        const playerX = this.game.player.x;
+        const playerY = this.game.player.y;
+
+        // Mouse controls both movement and aiming toward cursor
+        this.leftStick.active = true;
+        this.leftStick.baseX = playerX;
+        this.leftStick.baseY = playerY;
+        this.leftStick.currentX = x;
+        this.leftStick.currentY = y;
+
+        this.rightStick.active = true;
+        this.rightStick.baseX = playerX;
+        this.rightStick.baseY = playerY;
+        this.rightStick.currentX = x;
+        this.rightStick.currentY = y;
+
+        this.updatePlayer();
+    }
+
+    resetSticks() {
+        this.leftStick.active = false;
+        this.rightStick.active = false;
+        this.updatePlayer();
+    }
+
+    updatePlayer() {
+        if (!this.game.player) return;
+
+        // Update movement from left stick
+        if (this.leftStick.active) {
+            const dx = this.leftStick.currentX - this.leftStick.baseX;
+            const dy = this.leftStick.currentY - this.leftStick.baseY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // Deadzone and normalization
+            if (distance > 10) {
+                const normalizedDx = dx / distance;
+                const normalizedDy = dy / distance;
+                const strength = Math.min(1, distance / 60);
+
+                this.game.player.setMovement(
+                    normalizedDx * strength,
+                    normalizedDy * strength
+                );
+            } else {
+                this.game.player.setMovement(0, 0);
+            }
+        } else {
+            this.game.player.setMovement(0, 0);
+        }
+
+        // Update aiming from right stick
+        if (this.rightStick.active) {
+            const dx = this.rightStick.currentX - this.rightStick.baseX;
+            const dy = this.rightStick.currentY - this.rightStick.baseY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // Deadzone
+            if (distance > 10) {
+                this.game.player.setAim(dx, dy);
+            } else {
+                this.game.player.setAim(0, 0);
+            }
+        } else {
+            this.game.player.setAim(0, 0);
+        }
     }
 }
 

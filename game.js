@@ -4,7 +4,7 @@ const CONFIG = {
     canvasWidth: 500,
     canvasHeight: 900,
     playerSize: 40,
-    playerSpeed: 6,
+    playerSpeed: 3, // Reduced from 6 to 3 for better control
     playerBounce: 0.8,
     ballSize: 8,
     enemySize: 30,
@@ -13,6 +13,8 @@ const CONFIG = {
     enemySpawnRate: 800,
     waveDuration: 30000,
     bossInterval: 5, // Boss every 5 levels
+    gridCellSize: 40, // Size of each grid cell for enemy positioning
+    gridColumns: 12, // Number of columns in the grid
 };
 
 // Game State
@@ -27,6 +29,9 @@ class Game {
         this.score = 0;
         this.playerHP = 100;
         this.maxHP = 100;
+        this.xp = 0;
+        this.xpToNextLevel = 100;
+        this.playerLevel = 1;
 
         this.player = null;
         this.balls = [];
@@ -34,6 +39,10 @@ class Game {
         this.particles = [];
         this.powerups = [];
         this.bosses = [];
+        this.xpGems = [];
+
+        // Grid system for enemy positioning
+        this.enemyGrid = [];
 
         this.ballTypes = new Map();
         this.playerUpgrades = {
@@ -147,11 +156,16 @@ class Game {
         this.level = 1;
         this.score = 0;
         this.playerHP = this.maxHP;
+        this.xp = 0;
+        this.xpToNextLevel = 100;
+        this.playerLevel = 1;
         this.balls = [];
         this.enemies = [];
         this.bosses = [];
         this.particles = [];
         this.powerups = [];
+        this.xpGems = [];
+        this.enemyGrid = [];
         this.enemiesKilled = 0;
         this.waveEnemiesKilled = 0;
         document.getElementById('gameover-screen').classList.add('hidden');
@@ -219,6 +233,12 @@ class Game {
             return powerup.active;
         });
 
+        // Update XP gems
+        this.xpGems = this.xpGems.filter(gem => {
+            gem.update();
+            return gem.active;
+        });
+
         // Check collisions
         this.checkCollisions();
 
@@ -259,29 +279,38 @@ class Game {
     }
 
     spawnEnemy() {
-        // Spawn enemies in tighter clusters
-        const clusterCount = 2 + Math.floor(Math.random() * 3); // 2-4 enemies per cluster
-        const clusterX = Math.random() * (CONFIG.canvasWidth - CONFIG.enemySize * 3);
+        // Try to spawn an enemy using the grid system
+        const enemy = new Enemy(0, 0, this);
 
-        for (let i = 0; i < clusterCount; i++) {
-            const offsetX = (Math.random() - 0.5) * CONFIG.enemySize * 2;
-            const offsetY = (Math.random() - 0.5) * CONFIG.enemySize;
-            const x = Math.max(CONFIG.enemySize / 2, Math.min(CONFIG.canvasWidth - CONFIG.enemySize / 2, clusterX + offsetX));
-            const y = -CONFIG.enemySize + offsetY;
-            const enemy = new Enemy(x, y, this);
+        // Try to find a grid position for this enemy
+        const position = this.findAvailableGridPosition(enemy.gridWidth, enemy.gridHeight);
+
+        if (position) {
+            // Set enemy's grid position
+            enemy.gridCol = position.col;
+            enemy.gridRow = position.row;
+
+            // Calculate actual screen position
+            enemy.x = position.col * CONFIG.gridCellSize + (enemy.gridWidth * CONFIG.gridCellSize) / 2;
+            enemy.y = -enemy.gridHeight * CONFIG.gridCellSize; // Start above screen
+            enemy.targetY = position.row * CONFIG.gridCellSize + (enemy.gridHeight * CONFIG.gridCellSize) / 2;
+
+            // Occupy grid cells
+            this.occupyGridCells(enemy);
             this.enemies.push(enemy);
         }
+        // If no position found, don't spawn (grid is full)
     }
 
     checkCollisions() {
-        // Ball vs Enemy
+        // Ball vs Enemy (rectangular enemies)
         for (let ball of this.balls) {
             for (let enemy of this.enemies) {
-                if (this.checkCircleCollision(ball, enemy)) {
+                if (this.checkCircleRectCollision(ball, enemy)) {
                     this.handleBallEnemyCollision(ball, enemy);
                 }
             }
-            // Ball vs Boss
+            // Ball vs Boss (still circular)
             for (let boss of this.bosses) {
                 if (this.checkCircleCollision(ball, boss)) {
                     this.handleBallEnemyCollision(ball, boss);
@@ -289,15 +318,15 @@ class Game {
             }
         }
 
-        // Player vs Enemy
+        // Player vs Enemy (rectangular enemies)
         if (this.player) {
             for (let enemy of this.enemies) {
-                if (this.checkCircleCollision(this.player, enemy)) {
+                if (this.checkCircleRectCollision(this.player, enemy)) {
                     this.handlePlayerEnemyCollision(enemy);
                 }
             }
 
-            // Player vs Boss
+            // Player vs Boss (still circular)
             for (let boss of this.bosses) {
                 if (this.checkCircleCollision(this.player, boss)) {
                     this.handlePlayerEnemyCollision(boss);
@@ -310,6 +339,13 @@ class Game {
                     this.collectPowerup(powerup);
                 }
             }
+
+            // Player vs XP Gem
+            for (let gem of this.xpGems) {
+                if (this.checkCircleCollision(this.player, gem)) {
+                    this.collectXPGem(gem);
+                }
+            }
         }
     }
 
@@ -318,6 +354,27 @@ class Game {
         const dy = a.y - b.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         return distance < a.radius + b.radius;
+    }
+
+    checkCircleRectCollision(circle, rect) {
+        // Circle vs Rectangle collision detection
+        const rectWidth = rect.gridWidth * CONFIG.gridCellSize;
+        const rectHeight = rect.gridHeight * CONFIG.gridCellSize;
+        const rectLeft = rect.x - rectWidth / 2;
+        const rectRight = rect.x + rectWidth / 2;
+        const rectTop = rect.y - rectHeight / 2;
+        const rectBottom = rect.y + rectHeight / 2;
+
+        // Find the closest point on the rectangle to the circle
+        const closestX = Math.max(rectLeft, Math.min(circle.x, rectRight));
+        const closestY = Math.max(rectTop, Math.min(circle.y, rectBottom));
+
+        // Calculate distance from closest point to circle center
+        const dx = circle.x - closestX;
+        const dy = circle.y - closestY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        return distance < circle.radius;
     }
 
     handleBallEnemyCollision(ball, enemy) {
@@ -401,11 +458,41 @@ class Game {
 
         this.createExplosion(enemy.x, enemy.y, enemy.color);
 
-        // Drop powerup chance
-        if (Math.random() < 0.15) {
+        // Free up grid cells occupied by this enemy
+        this.freeGridCells(enemy);
+
+        // Drop XP gems (always)
+        const xpAmount = enemy.xpValue || 5;
+        const gem = new XPGem(enemy.x, enemy.y, xpAmount, this);
+        this.xpGems.push(gem);
+
+        // Drop powerup chance (reduced since we always drop XP)
+        if (Math.random() < 0.08) {
             const powerup = new Powerup(enemy.x, enemy.y, this);
             this.powerups.push(powerup);
         }
+    }
+
+    collectXPGem(gem) {
+        gem.active = false;
+        this.xp += gem.xpValue;
+
+        // Check for level up
+        if (this.xp >= this.xpToNextLevel) {
+            this.levelUp();
+        }
+
+        this.createExplosion(gem.x, gem.y, '#00ff00', 15);
+    }
+
+    levelUp() {
+        this.playerLevel++;
+        this.xp -= this.xpToNextLevel;
+        this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5);
+
+        // Show upgrade menu
+        this.gameState = 'upgrade';
+        this.showUpgradeMenu();
     }
 
     collectPowerup(powerup) {
@@ -566,6 +653,64 @@ class Game {
         document.getElementById('hp').textContent = Math.max(0, Math.floor(this.playerHP));
     }
 
+    // Grid management for enemy positioning
+    occupyGridCells(enemy) {
+        const startCol = enemy.gridCol;
+        const startRow = enemy.gridRow;
+
+        for (let r = 0; r < enemy.gridHeight; r++) {
+            for (let c = 0; c < enemy.gridWidth; c++) {
+                const gridKey = `${startCol + c},${startRow + r}`;
+                this.enemyGrid.push(gridKey);
+            }
+        }
+    }
+
+    freeGridCells(enemy) {
+        const startCol = enemy.gridCol;
+        const startRow = enemy.gridRow;
+
+        for (let r = 0; r < enemy.gridHeight; r++) {
+            for (let c = 0; c < enemy.gridWidth; c++) {
+                const gridKey = `${startCol + c},${startRow + r}`;
+                const index = this.enemyGrid.indexOf(gridKey);
+                if (index > -1) {
+                    this.enemyGrid.splice(index, 1);
+                }
+            }
+        }
+    }
+
+    canPlaceEnemy(col, row, width, height) {
+        // Check if enemy would go out of bounds
+        if (col + width > CONFIG.gridColumns || col < 0) return false;
+
+        // Check if any of the cells are occupied
+        for (let r = 0; r < height; r++) {
+            for (let c = 0; c < width; c++) {
+                const gridKey = `${col + c},${row + r}`;
+                if (this.enemyGrid.includes(gridKey)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    findAvailableGridPosition(width, height) {
+        // Try to find a position for this enemy
+        const maxAttempts = 50;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const col = Math.floor(Math.random() * (CONFIG.gridColumns - width + 1));
+            const row = Math.floor(Math.random() * 3); // Keep enemies in top few rows
+
+            if (this.canPlaceEnemy(col, row, width, height)) {
+                return { col, row };
+            }
+        }
+        return null; // No position found
+    }
+
     gameOver() {
         this.gameState = 'gameover';
         document.getElementById('final-score').textContent = this.score;
@@ -583,11 +728,15 @@ class Game {
 
         // Draw entities
         this.particles.forEach(p => p.render(this.ctx));
+        this.xpGems.forEach(g => g.render(this.ctx));
         this.powerups.forEach(p => p.render(this.ctx));
         this.enemies.forEach(e => e.render(this.ctx));
         this.bosses.forEach(b => b.render(this.ctx));
         this.balls.forEach(b => b.render(this.ctx));
         if (this.player) this.player.render(this.ctx);
+
+        // Draw XP bar
+        this.drawXPBar();
 
         // Draw twin stick control zones (visual aid)
         if (this.player) this.drawControlZones();
@@ -643,6 +792,35 @@ class Game {
         this.ctx.font = '12px Arial';
         this.ctx.textAlign = 'center';
         this.ctx.fillText('Wave Progress', CONFIG.canvasWidth / 2, y - 5);
+    }
+
+    drawXPBar() {
+        const barWidth = CONFIG.canvasWidth * 0.8;
+        const barHeight = 12;
+        const x = (CONFIG.canvasWidth - barWidth) / 2;
+        const y = 10;
+
+        // Calculate XP progress
+        const progress = Math.min(1, this.xp / this.xpToNextLevel);
+
+        // Background
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(x, y, barWidth, barHeight);
+
+        // XP Progress
+        this.ctx.fillStyle = '#00ff00';
+        this.ctx.fillRect(x, y, barWidth * progress, barHeight);
+
+        // Border
+        this.ctx.strokeStyle = '#ffffff';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(x, y, barWidth, barHeight);
+
+        // Text - Player Level and XP
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = 'bold 10px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`Level ${this.playerLevel} - ${this.xp}/${this.xpToNextLevel} XP`, CONFIG.canvasWidth / 2, y + 10);
     }
 
     drawControlZones() {
@@ -850,35 +1028,61 @@ class Enemy {
         this.x = x;
         this.y = y;
         this.game = game;
-        this.radius = CONFIG.enemySize / 2;
         this.active = true;
 
-        // Random enemy type with increased tankiness
+        // Random enemy type with grid sizes
         const rand = Math.random();
-        if (rand < 0.6) {
+        if (rand < 0.5) {
+            // Small enemy - 1x1
             this.type = 'normal';
             this.hp = 5 + game.level * 2;
             this.maxHP = this.hp;
             this.color = '#ff6b6b';
-            this.speed = CONFIG.enemySpeed;
+            this.speed = CONFIG.enemySpeed * 1.5;
             this.scoreValue = 10;
-        } else if (rand < 0.85) {
+            this.xpValue = 5;
+            this.gridWidth = 1;
+            this.gridHeight = 1;
+        } else if (rand < 0.75) {
+            // Medium enemy - 2x1
             this.type = 'tank';
-            this.hp = 12 + game.level * 4;
+            this.hp = 15 + game.level * 4;
             this.maxHP = this.hp;
             this.color = '#845EC2';
-            this.speed = CONFIG.enemySpeed * 0.5;
-            this.scoreValue = 25;
-            this.radius *= 1.3;
-        } else {
-            this.type = 'fast';
-            this.hp = 3 + game.level;
+            this.speed = CONFIG.enemySpeed * 0.8;
+            this.scoreValue = 30;
+            this.xpValue = 12;
+            this.gridWidth = 2;
+            this.gridHeight = 1;
+        } else if (rand < 0.9) {
+            // Large enemy - 2x2
+            this.type = 'heavy';
+            this.hp = 30 + game.level * 6;
             this.maxHP = this.hp;
-            this.color = '#00d9ff';
-            this.speed = CONFIG.enemySpeed * 2;
-            this.scoreValue = 15;
-            this.radius *= 0.8;
+            this.color = '#9b59b6';
+            this.speed = CONFIG.enemySpeed * 0.5;
+            this.scoreValue = 60;
+            this.xpValue = 25;
+            this.gridWidth = 2;
+            this.gridHeight = 2;
+        } else {
+            // Extra large enemy - 3x2 or 4x2
+            this.type = 'mega';
+            this.hp = 50 + game.level * 10;
+            this.maxHP = this.hp;
+            this.color = '#e74c3c';
+            this.speed = CONFIG.enemySpeed * 0.4;
+            this.scoreValue = 100;
+            this.xpValue = 40;
+            this.gridWidth = Math.random() < 0.5 ? 3 : 4;
+            this.gridHeight = 2;
         }
+
+        // Grid position (will be set by spawn logic)
+        this.gridCol = 0;
+        this.gridRow = 0;
+        this.targetY = 0;
+        this.inPosition = false;
 
         this.burning = false;
         this.burnTime = 0;
@@ -908,13 +1112,17 @@ class Enemy {
             }
         }
 
-        // Move down
-        this.y += this.speed * speedMod;
-
-        // Remove if out of bounds
-        if (this.y > CONFIG.canvasHeight + this.radius) {
-            this.active = false;
+        // Move to target position, then stay there (like breakout blocks)
+        if (!this.inPosition) {
+            if (this.y < this.targetY) {
+                this.y += this.speed * speedMod * 3; // Move faster to position
+                if (this.y >= this.targetY) {
+                    this.y = this.targetY;
+                    this.inPosition = true;
+                }
+            }
         }
+        // Once in position, stay there (don't move down)
     }
 
     takeDamage(amount) {
@@ -927,154 +1135,135 @@ class Enemy {
     render(ctx) {
         ctx.save();
 
-        // Monster shadow
+        // Calculate dimensions based on grid size
+        const width = this.gridWidth * CONFIG.gridCellSize;
+        const height = this.gridHeight * CONFIG.gridCellSize;
+        const halfWidth = width / 2;
+        const halfHeight = height / 2;
+
+        // Shadow
         ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-        ctx.beginPath();
-        ctx.ellipse(this.x, this.y + this.radius * 1.5, this.radius * 1.2, this.radius * 0.3, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(this.x - halfWidth + 5, this.y - halfHeight + 5, width, height);
 
-        // Draw monster body with tentacles/appendages
+        // Main body - rectangular block
         ctx.fillStyle = this.color;
+        ctx.fillRect(this.x - halfWidth, this.y - halfHeight, width, height);
 
-        // Tentacles/legs based on type
-        if (this.type === 'normal' || this.type === 'fast') {
-            // Draw squiggly tentacles
-            for (let i = 0; i < 3; i++) {
-                const angle = Math.PI / 2 + (i - 1) * 0.5;
-                const wobble = Math.sin(Date.now() / 200 + i) * 0.2;
-                ctx.beginPath();
-                ctx.moveTo(this.x, this.y + this.radius * 0.5);
-                ctx.quadraticCurveTo(
-                    this.x + Math.cos(angle + wobble) * this.radius,
-                    this.y + this.radius * 1.2,
-                    this.x + Math.cos(angle) * this.radius * 0.7,
-                    this.y + this.radius * 2
-                );
-                ctx.lineWidth = this.radius * 0.3;
-                ctx.strokeStyle = this.color;
-                ctx.stroke();
-            }
+        // Border
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(this.x - halfWidth, this.y - halfHeight, width, height);
+
+        // Inner detail lines
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+        ctx.lineWidth = 1;
+        for (let i = 1; i < this.gridWidth; i++) {
+            const lineX = this.x - halfWidth + i * CONFIG.gridCellSize;
+            ctx.beginPath();
+            ctx.moveTo(lineX, this.y - halfHeight);
+            ctx.lineTo(lineX, this.y + halfHeight);
+            ctx.stroke();
+        }
+        for (let i = 1; i < this.gridHeight; i++) {
+            const lineY = this.y - halfHeight + i * CONFIG.gridCellSize;
+            ctx.beginPath();
+            ctx.moveTo(this.x - halfWidth, lineY);
+            ctx.lineTo(this.x + halfWidth, lineY);
+            ctx.stroke();
         }
 
-        // Main body blob
-        const bodyWidth = this.radius * 1.4;
-        const bodyHeight = this.radius * 1.6;
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.ellipse(this.x, this.y, bodyWidth, bodyHeight, 0, 0, Math.PI * 2);
-        ctx.fill();
+        // Draw eyes
+        const eyeSize = Math.min(width, height) * 0.15;
+        const eyeSpacing = Math.min(width * 0.25, 15);
 
-        // Darker body segments for depth
-        ctx.fillStyle = this.type === 'tank' ? '#6b4ea0' : 'rgba(0, 0, 0, 0.2)';
-        ctx.beginPath();
-        ctx.ellipse(this.x, this.y + this.radius * 0.3, bodyWidth * 0.8, bodyHeight * 0.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Draw scary eyes (glowing)
-        const eyeSize = this.radius * 0.35;
-        const eyeOffset = this.radius * 0.5;
-
-        // Eye glow
-        ctx.shadowBlur = 15;
+        ctx.shadowBlur = 10;
         ctx.shadowColor = '#ffff00';
         ctx.fillStyle = '#ffff00';
 
         // Left eye
         ctx.beginPath();
-        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.4, eyeSize, 0, Math.PI * 2);
+        ctx.arc(this.x - eyeSpacing, this.y - height * 0.15, eyeSize, 0, Math.PI * 2);
         ctx.fill();
 
         // Right eye
         ctx.beginPath();
-        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.4, eyeSize, 0, Math.PI * 2);
+        ctx.arc(this.x + eyeSpacing, this.y - height * 0.15, eyeSize, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.shadowBlur = 0;
 
-        // Evil pupils
+        // Pupils
         ctx.fillStyle = '#000000';
         const pupilSize = eyeSize * 0.4;
         ctx.beginPath();
-        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.4, pupilSize, 0, Math.PI * 2);
+        ctx.arc(this.x - eyeSpacing, this.y - height * 0.15, pupilSize, 0, Math.PI * 2);
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.4, pupilSize, 0, Math.PI * 2);
+        ctx.arc(this.x + eyeSpacing, this.y - height * 0.15, pupilSize, 0, Math.PI * 2);
         ctx.fill();
 
-        // Menacing mouth with sharp teeth
+        // Mouth
         ctx.fillStyle = '#000000';
-        ctx.beginPath();
-        ctx.ellipse(this.x, this.y + this.radius * 0.4, this.radius * 0.6, this.radius * 0.3, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(this.x - width * 0.2, this.y + height * 0.1, width * 0.4, height * 0.15);
 
-        // Sharp triangular teeth
+        // Teeth
         ctx.fillStyle = '#ffffff';
-        const toothCount = this.type === 'tank' ? 6 : 5;
+        const toothCount = this.gridWidth + 2;
+        const toothWidth = (width * 0.4) / toothCount;
         for (let i = 0; i < toothCount; i++) {
-            const tx = this.x - this.radius * 0.5 + (i * this.radius / toothCount);
-            const ty = this.y + this.radius * 0.25;
+            const tx = this.x - width * 0.2 + i * toothWidth;
+            const ty = this.y + height * 0.1;
             ctx.beginPath();
             ctx.moveTo(tx, ty);
-            ctx.lineTo(tx + this.radius * 0.15, ty);
-            ctx.lineTo(tx + this.radius * 0.075, ty + this.radius * 0.3);
+            ctx.lineTo(tx + toothWidth, ty);
+            ctx.lineTo(tx + toothWidth / 2, ty + height * 0.1);
             ctx.closePath();
             ctx.fill();
         }
 
-        // Horns/spikes for tank type
-        if (this.type === 'tank') {
-            ctx.fillStyle = '#6b4ea0';
-            const hornCount = 3;
-            for (let i = 0; i < hornCount; i++) {
-                const angle = -Math.PI + (i * Math.PI / (hornCount - 1));
-                const hx = this.x + Math.cos(angle) * this.radius * 0.9;
-                const hy = this.y + Math.sin(angle) * this.radius * 1.3;
+        // Type indicators
+        if (this.type === 'mega') {
+            // Spikes on top for mega enemies
+            ctx.fillStyle = this.color;
+            const spikeCount = this.gridWidth;
+            const spikeWidth = width / spikeCount;
+            for (let i = 0; i < spikeCount; i++) {
+                const sx = this.x - halfWidth + i * spikeWidth;
+                const sy = this.y - halfHeight;
                 ctx.beginPath();
-                ctx.moveTo(hx, hy);
-                ctx.lineTo(hx + Math.cos(angle) * this.radius * 0.5, hy + Math.sin(angle) * this.radius * 0.5 - this.radius * 0.3);
-                ctx.lineTo(hx + Math.cos(angle + 0.3) * this.radius * 0.3, hy + Math.sin(angle + 0.3) * this.radius * 0.3);
+                ctx.moveTo(sx, sy);
+                ctx.lineTo(sx + spikeWidth, sy);
+                ctx.lineTo(sx + spikeWidth / 2, sy - 10);
                 ctx.closePath();
                 ctx.fill();
             }
         }
 
-        // Speed lines for fast type
-        if (this.type === 'fast') {
-            ctx.strokeStyle = 'rgba(0, 217, 255, 0.5)';
-            ctx.lineWidth = 2;
-            for (let i = 0; i < 3; i++) {
-                ctx.beginPath();
-                ctx.moveTo(this.x - this.radius - i * 5, this.y - 10 + i * 8);
-                ctx.lineTo(this.x - this.radius - 15 - i * 5, this.y - 10 + i * 8);
-                ctx.stroke();
-            }
-        }
-
         // HP bar
-        const barWidth = this.radius * 2.5;
+        const barWidth = width;
         const barHeight = 5;
         const hpPercent = this.hp / this.maxHP;
 
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2.2, barWidth, barHeight);
+        ctx.fillRect(this.x - halfWidth, this.y - halfHeight - 8, barWidth, barHeight);
 
         const hpColor = hpPercent > 0.5 ? '#00ff00' : hpPercent > 0.25 ? '#ffff00' : '#ff0000';
         ctx.fillStyle = hpColor;
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2.2, barWidth * hpPercent, barHeight);
+        ctx.fillRect(this.x - halfWidth, this.y - halfHeight - 8, barWidth * hpPercent, barHeight);
 
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1;
-        ctx.strokeRect(this.x - barWidth / 2, this.y - this.radius * 2.2, barWidth, barHeight);
+        ctx.strokeRect(this.x - halfWidth, this.y - halfHeight - 8, barWidth, barHeight);
 
         // Status effect indicators
         if (this.burning) {
-            ctx.font = '18px Arial';
-            ctx.fillText('🔥', this.x - this.radius - 10, this.y - this.radius * 2.3);
+            ctx.font = '16px Arial';
+            ctx.fillText('🔥', this.x - halfWidth - 12, this.y - halfHeight);
         }
 
         if (this.slowed) {
-            ctx.font = '18px Arial';
-            ctx.fillText('❄️', this.x + this.radius - 5, this.y - this.radius * 2.3);
+            ctx.font = '16px Arial';
+            ctx.fillText('❄️', this.x + halfWidth - 8, this.y - halfHeight);
         }
 
         ctx.restore();
@@ -1373,6 +1562,89 @@ class Powerup {
         // Glow
         ctx.shadowBlur = 20;
         ctx.shadowColor = this.color;
+        ctx.fill();
+
+        ctx.restore();
+        ctx.shadowBlur = 0;
+    }
+}
+
+// XP Gem Class
+class XPGem {
+    constructor(x, y, xpValue, game) {
+        this.x = x;
+        this.y = y;
+        this.game = game;
+        this.xpValue = xpValue;
+        this.radius = 8;
+        this.active = true;
+        this.speed = 1.5;
+        this.color = '#00ff00';
+        this.rotation = 0;
+        this.pulsePhase = Math.random() * Math.PI * 2;
+
+        // Move toward player if close
+        this.magnetRange = 100;
+    }
+
+    update() {
+        // Magnetic pull toward player
+        if (this.game.player) {
+            const dx = this.game.player.x - this.x;
+            const dy = this.game.player.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < this.magnetRange) {
+                // Pull toward player
+                const pullStrength = 0.2;
+                this.x += (dx / distance) * pullStrength * (this.magnetRange - distance) / 10;
+                this.y += (dy / distance) * pullStrength * (this.magnetRange - distance) / 10;
+            } else {
+                // Slow fall
+                this.y += this.speed;
+            }
+        } else {
+            this.y += this.speed;
+        }
+
+        this.rotation += 0.15;
+
+        if (this.y > CONFIG.canvasHeight + this.radius) {
+            this.active = false;
+        }
+    }
+
+    render(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+
+        // Pulsing effect
+        const pulse = 1 + Math.sin(Date.now() / 200 + this.pulsePhase) * 0.2;
+        const size = this.radius * pulse;
+
+        // Glow
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+
+        // Draw gem shape (diamond)
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.moveTo(0, -size);
+        ctx.lineTo(size * 0.7, 0);
+        ctx.lineTo(0, size);
+        ctx.lineTo(-size * 0.7, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        // Inner highlight
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.beginPath();
+        ctx.moveTo(0, -size * 0.5);
+        ctx.lineTo(size * 0.3, 0);
+        ctx.lineTo(0, size * 0.5);
+        ctx.lineTo(-size * 0.3, 0);
+        ctx.closePath();
         ctx.fill();
 
         ctx.restore();

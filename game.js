@@ -1,15 +1,15 @@
 // Ball Breaker - Roguelite Breakout Game
 // Game Configuration
 const CONFIG = {
-    canvasWidth: 800,
-    canvasHeight: 600,
+    canvasWidth: 500,
+    canvasHeight: 900,
     playerSize: 40,
-    playerSpeed: 5,
+    playerSpeed: 12,
     ballSize: 8,
     enemySize: 30,
-    enemySpeed: 1,
-    ballFireRate: 800,
-    enemySpawnRate: 2000,
+    enemySpeed: 0.4,
+    ballFireRate: 250,
+    enemySpawnRate: 800,
     waveDuration: 30000,
 };
 
@@ -247,9 +247,18 @@ class Game {
     }
 
     spawnEnemy() {
-        const x = Math.random() * (CONFIG.canvasWidth - CONFIG.enemySize);
-        const enemy = new Enemy(x, -CONFIG.enemySize, this);
-        this.enemies.push(enemy);
+        // Spawn enemies in tighter clusters
+        const clusterCount = 2 + Math.floor(Math.random() * 3); // 2-4 enemies per cluster
+        const clusterX = Math.random() * (CONFIG.canvasWidth - CONFIG.enemySize * 3);
+
+        for (let i = 0; i < clusterCount; i++) {
+            const offsetX = (Math.random() - 0.5) * CONFIG.enemySize * 2;
+            const offsetY = (Math.random() - 0.5) * CONFIG.enemySize;
+            const x = Math.max(CONFIG.enemySize / 2, Math.min(CONFIG.canvasWidth - CONFIG.enemySize / 2, clusterX + offsetX));
+            const y = -CONFIG.enemySize + offsetY;
+            const enemy = new Enemy(x, y, this);
+            this.enemies.push(enemy);
+        }
     }
 
     checkCollisions() {
@@ -675,9 +684,20 @@ class Ball {
         this.x += this.vx;
         this.y += this.vy;
 
-        // Remove if out of bounds
-        if (this.y < -this.radius || this.x < -this.radius ||
-            this.x > CONFIG.canvasWidth + this.radius) {
+        // Bounce off left and right walls
+        if (this.x < this.radius || this.x > CONFIG.canvasWidth - this.radius) {
+            this.vx = -this.vx;
+            this.x = Math.max(this.radius, Math.min(CONFIG.canvasWidth - this.radius, this.x));
+        }
+
+        // Bounce off top wall
+        if (this.y < this.radius) {
+            this.vy = -this.vy;
+            this.y = this.radius;
+        }
+
+        // Remove if out of bounds (bottom only)
+        if (this.y > CONFIG.canvasHeight + this.radius) {
             this.active = false;
         }
     }
@@ -777,34 +797,101 @@ class Enemy {
     }
 
     render(ctx) {
-        // Draw enemy
+        // Draw monster body
         ctx.fillStyle = this.color;
         ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+
+        // Monster body (rounded rectangle-ish shape)
+        const bodyWidth = this.radius * 1.5;
+        const bodyHeight = this.radius * 1.8;
+
+        // Main body
+        ctx.ellipse(this.x, this.y, bodyWidth, bodyHeight, 0, 0, Math.PI * 2);
         ctx.fill();
 
+        // Draw monster eyes
+        ctx.fillStyle = '#ffffff';
+        const eyeSize = this.radius * 0.3;
+        const eyeOffset = this.radius * 0.4;
+
+        // Left eye
+        ctx.beginPath();
+        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.3, eyeSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Right eye
+        ctx.beginPath();
+        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.3, eyeSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw pupils
+        ctx.fillStyle = '#000000';
+        const pupilSize = eyeSize * 0.5;
+
+        ctx.beginPath();
+        ctx.arc(this.x - eyeOffset, this.y - this.radius * 0.3, pupilSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(this.x + eyeOffset, this.y - this.radius * 0.3, pupilSize, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw monster mouth/teeth
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y + this.radius * 0.3, this.radius * 0.4, 0, Math.PI);
+        ctx.fill();
+
+        // Draw teeth
+        ctx.fillStyle = '#ffffff';
+        const toothCount = 4;
+        const toothWidth = this.radius * 0.8 / toothCount;
+        for (let i = 0; i < toothCount; i++) {
+            const tx = this.x - this.radius * 0.4 + i * toothWidth;
+            const ty = this.y + this.radius * 0.3;
+            ctx.fillRect(tx, ty, toothWidth * 0.8, this.radius * 0.2);
+        }
+
+        // Draw little horns/spikes for different types
+        if (this.type === 'tank') {
+            ctx.fillStyle = this.color;
+            // Left horn
+            ctx.beginPath();
+            ctx.moveTo(this.x - this.radius, this.y - this.radius);
+            ctx.lineTo(this.x - this.radius - 8, this.y - this.radius - 10);
+            ctx.lineTo(this.x - this.radius + 5, this.y - this.radius);
+            ctx.fill();
+
+            // Right horn
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.radius, this.y - this.radius);
+            ctx.lineTo(this.x + this.radius + 8, this.y - this.radius - 10);
+            ctx.lineTo(this.x + this.radius - 5, this.y - this.radius);
+            ctx.fill();
+        }
+
         // Draw HP bar
-        const barWidth = this.radius * 2;
+        const barWidth = this.radius * 2.5;
         const barHeight = 4;
         const hpPercent = this.hp / this.maxHP;
 
         ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius - 10, barWidth, barHeight);
+        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2 - 5, barWidth, barHeight);
 
         ctx.fillStyle = '#00ff00';
-        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius - 10, barWidth * hpPercent, barHeight);
+        ctx.fillRect(this.x - barWidth / 2, this.y - this.radius * 2 - 5, barWidth * hpPercent, barHeight);
 
         // Status effect indicators
         if (this.burning) {
             ctx.fillStyle = '#ff6b6b';
             ctx.font = '16px Arial';
-            ctx.fillText('🔥', this.x - 8, this.y - this.radius - 15);
+            ctx.fillText('🔥', this.x - 8, this.y - this.radius * 2 - 10);
         }
 
         if (this.slowed) {
             ctx.fillStyle = '#4ecdc4';
             ctx.font = '16px Arial';
-            ctx.fillText('❄️', this.x + 8, this.y - this.radius - 15);
+            ctx.fillText('❄️', this.x + 8, this.y - this.radius * 2 - 10);
         }
     }
 }

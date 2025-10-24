@@ -28,12 +28,19 @@ class Game {
         this.playerHP = 100;
         this.maxHP = 100;
 
+        // XP System
+        this.playerLevel = 1;
+        this.playerXP = 0;
+        this.xpToNextLevel = 10;
+        this.xpMultiplier = 1.5; // Each level requires 1.5x more XP
+
         this.player = null;
         this.balls = [];
         this.enemies = [];
         this.particles = [];
         this.powerups = [];
         this.bosses = [];
+        this.xpGems = [];
 
         this.ballTypes = new Map();
         this.playerUpgrades = {
@@ -152,8 +159,12 @@ class Game {
         this.bosses = [];
         this.particles = [];
         this.powerups = [];
+        this.xpGems = [];
         this.enemiesKilled = 0;
         this.waveEnemiesKilled = 0;
+        this.playerLevel = 1;
+        this.playerXP = 0;
+        this.xpToNextLevel = 10;
         document.getElementById('gameover-screen').classList.add('hidden');
     }
 
@@ -217,6 +228,12 @@ class Game {
         this.powerups = this.powerups.filter(powerup => {
             powerup.update();
             return powerup.active;
+        });
+
+        // Update XP gems
+        this.xpGems = this.xpGems.filter(gem => {
+            gem.update();
+            return gem.active;
         });
 
         // Check collisions
@@ -310,6 +327,13 @@ class Game {
                     this.collectPowerup(powerup);
                 }
             }
+
+            // Player vs XP Gem
+            for (let gem of this.xpGems) {
+                if (this.checkCircleCollision(this.player, gem)) {
+                    this.collectXP(gem);
+                }
+            }
         }
     }
 
@@ -401,11 +425,55 @@ class Game {
 
         this.createExplosion(enemy.x, enemy.y, enemy.color);
 
-        // Drop powerup chance
-        if (Math.random() < 0.15) {
+        // Drop XP gems
+        const xpValue = enemy.type === 'boss' ? 50 : enemy.type === 'tank' ? 5 : enemy.type === 'fast' ? 2 : 3;
+        const gemCount = enemy.type === 'boss' ? 10 : Math.floor(Math.random() * 3) + 1;
+
+        for (let i = 0; i < gemCount; i++) {
+            const angle = (Math.PI * 2 * i) / gemCount + Math.random() * 0.5;
+            const speed = 2 + Math.random() * 3;
+            const gem = new XPGem(enemy.x, enemy.y, xpValue, angle, speed, this);
+            this.xpGems.push(gem);
+        }
+
+        // Drop powerup chance (reduced since we have XP now)
+        if (Math.random() < 0.1) {
             const powerup = new Powerup(enemy.x, enemy.y, this);
             this.powerups.push(powerup);
         }
+    }
+
+    collectXP(gem) {
+        gem.active = false;
+        this.playerXP += gem.value;
+
+        // Check for level up
+        if (this.playerXP >= this.xpToNextLevel) {
+            this.levelUp();
+        }
+
+        // XP pickup particles
+        for (let i = 0; i < 5; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 1 + Math.random() * 2;
+            this.particles.push(new Particle(gem.x, gem.y, angle, speed, gem.color, 20));
+        }
+    }
+
+    levelUp() {
+        this.playerLevel++;
+        this.playerXP -= this.xpToNextLevel;
+        this.xpToNextLevel = Math.floor(this.xpToNextLevel * this.xpMultiplier);
+
+        // Level up effects
+        this.createExplosion(this.player.x, this.player.y, '#ffd700', 60);
+
+        // Show upgrade menu
+        this.gameState = 'upgrade';
+        this.showUpgradeMenu();
+
+        // Heal a bit on level up
+        this.playerHP = Math.min(this.maxHP, this.playerHP + 20);
     }
 
     collectPowerup(powerup) {
@@ -564,6 +632,14 @@ class Game {
         document.getElementById('level').textContent = this.level;
         document.getElementById('score').textContent = this.score;
         document.getElementById('hp').textContent = Math.max(0, Math.floor(this.playerHP));
+        document.getElementById('player-level').textContent = this.playerLevel;
+
+        // Update XP bar
+        const xpPercent = this.playerXP / this.xpToNextLevel;
+        const xpBar = document.getElementById('xp-bar');
+        if (xpBar) {
+            xpBar.style.width = (xpPercent * 100) + '%';
+        }
     }
 
     gameOver() {
@@ -583,6 +659,7 @@ class Game {
 
         // Draw entities
         this.particles.forEach(p => p.render(this.ctx));
+        this.xpGems.forEach(g => g.render(this.ctx));
         this.powerups.forEach(p => p.render(this.ctx));
         this.enemies.forEach(e => e.render(this.ctx));
         this.bosses.forEach(b => b.render(this.ctx));
@@ -1377,6 +1454,130 @@ class Powerup {
 
         ctx.restore();
         ctx.shadowBlur = 0;
+    }
+}
+
+// XP Gem Class
+class XPGem {
+    constructor(x, y, value, angle, speed, game) {
+        this.x = x;
+        this.y = y;
+        this.game = game;
+        this.value = value;
+        this.radius = 6 + (value / 10); // Bigger gems for more XP
+        this.active = true;
+        this.rotation = 0;
+
+        // Initial velocity from enemy death
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed;
+
+        // Magnetic attraction settings
+        this.magnetRange = 80;
+        this.magnetStrength = 0.3;
+
+        // Color based on value
+        if (value >= 50) {
+            this.color = '#ff00ff'; // Purple for boss XP
+        } else if (value >= 5) {
+            this.color = '#00d9ff'; // Blue for high value
+        } else {
+            this.color = '#4ecdc4'; // Cyan for normal
+        }
+
+        // Fade in effect
+        this.age = 0;
+        this.maxAge = 600; // 10 seconds before fading
+    }
+
+    update() {
+        this.age++;
+
+        // Apply velocity with friction
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vx *= 0.95;
+        this.vy *= 0.95;
+
+        // Gravity
+        this.vy += 0.15;
+
+        // Magnetic attraction to player
+        if (this.game.player) {
+            const dx = this.game.player.x - this.x;
+            const dy = this.game.player.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance < this.magnetRange) {
+                const pullStrength = this.magnetStrength * (1 - distance / this.magnetRange);
+                this.vx += (dx / distance) * pullStrength * 2;
+                this.vy += (dy / distance) * pullStrength * 2;
+            }
+        }
+
+        // Bounce off walls
+        if (this.x < this.radius || this.x > CONFIG.canvasWidth - this.radius) {
+            this.vx = -this.vx * 0.5;
+            this.x = Math.max(this.radius, Math.min(CONFIG.canvasWidth - this.radius, this.x));
+        }
+
+        if (this.y < this.radius) {
+            this.vy = -this.vy * 0.5;
+            this.y = this.radius;
+        }
+
+        // Remove if falls off screen or too old
+        if (this.y > CONFIG.canvasHeight + this.radius || this.age > this.maxAge) {
+            this.active = false;
+        }
+
+        this.rotation += 0.05;
+    }
+
+    render(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+
+        // Fade out if old
+        const alpha = this.age > this.maxAge - 120 ? (this.maxAge - this.age) / 120 : 1;
+        ctx.globalAlpha = alpha;
+
+        // Outer glow
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+
+        // Draw crystal/gem shape
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+
+        // Hexagonal gem
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI * 2 * i) / 6;
+            const x = Math.cos(angle) * this.radius;
+            const y = Math.sin(angle) * this.radius;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Inner highlight
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI * 2 * i) / 6;
+            const x = Math.cos(angle) * this.radius * 0.5;
+            const y = Math.sin(angle) * this.radius * 0.5;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        ctx.globalAlpha = 1;
     }
 }
 

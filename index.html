@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Ball Breaker - Roguelite Breakout</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-overlay">
+            <div id="score-panel">
+                <div class="stat">Level: <span id="level">1</span></div>
+                <div class="stat">Score: <span id="score">0</span></div>
+                <div class="stat">HP: <span id="hp">100</span></div>
+            </div>
+        </div>
+
+        <!-- Upgrade Menu -->
+        <div id="upgrade-menu" class="hidden">
+            <div class="upgrade-panel">
+                <h2>Choose Your Upgrade</h2>
+                <div id="upgrade-options"></div>
+            </div>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen">
+            <h1>BALL BREAKER</h1>
+            <p>Roguelite Breakout Adventure</p>
+            <button id="start-btn" class="game-btn">Start Game</button>
+            <div class="controls-info">
+                <p>Touch/Click to move your character</p>
+                <p>Balls auto-fire upwards</p>
+                <p>Destroy enemies and collect powerups!</p>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="gameover-screen" class="hidden">
+            <h1>Game Over</h1>
+            <p>Final Score: <span id="final-score">0</span></p>
+            <p>Level Reached: <span id="final-level">1</span></p>
+            <button id="restart-btn" class="game-btn">Play Again</button>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>

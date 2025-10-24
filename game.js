@@ -192,8 +192,21 @@ class Game {
             }
         }
 
-        // Spawn enemies
-        const spawnRate = Math.max(500, CONFIG.enemySpawnRate - (this.level * 100));
+        // Spawn enemies with dynamic rate based on enemy count
+        // Spawn faster when enemies are sparse to prevent spawn camping
+        const baseSpawnRate = Math.max(500, CONFIG.enemySpawnRate - (this.level * 100));
+        const enemyCount = this.enemies.length;
+        const minEnemies = 5 + this.level; // Minimum enemies on screen increases with level
+
+        let spawnRate = baseSpawnRate;
+        if (enemyCount < minEnemies) {
+            // Spawn much faster when below minimum
+            spawnRate = baseSpawnRate * 0.3; // 3x faster
+        } else if (enemyCount < minEnemies * 1.5) {
+            // Spawn moderately faster when slightly below threshold
+            spawnRate = baseSpawnRate * 0.6; // 1.7x faster
+        }
+
         if (now - this.lastEnemySpawn > spawnRate) {
             this.spawnEnemy();
             this.lastEnemySpawn = now;
@@ -318,10 +331,9 @@ class Game {
             const top = enemy.y - height / 2;
             const bottom = enemy.y + height / 2;
 
-            // Check for rectangle overlap with some spacing buffer
-            const buffer = 5;
-            if (newLeft < right + buffer && newRight > left - buffer &&
-                newTop < bottom + buffer && newBottom > top - buffer) {
+            // Check for rectangle overlap (no buffer - enemies can touch)
+            if (newLeft < right && newRight > left &&
+                newTop < bottom && newBottom > top) {
                 return true; // Overlap detected
             }
         }
@@ -519,7 +531,7 @@ class Game {
     levelUp() {
         this.playerLevel++;
         this.xp -= this.xpToNextLevel;
-        this.xpToNextLevel = Math.floor(this.xpToNextLevel * 1.5);
+        this.xpToNextLevel = Math.floor(this.xpToNextLevel * 2.0); // Steeper curve for slower progression
 
         // Show upgrade menu
         this.gameState = 'upgrade';
@@ -587,71 +599,97 @@ class Game {
             {
                 id: 'damage',
                 name: 'Power Boost',
-                description: 'Increase ball damage by 50%',
-                apply: () => this.playerUpgrades.ballDamage *= 1.5
+                description: 'Increase ball damage by 25%',
+                available: () => true, // Always available
+                apply: () => this.playerUpgrades.ballDamage *= 1.25
             },
             {
                 id: 'speed',
                 name: 'Swift Balls',
-                description: 'Increase ball speed by 30%',
-                apply: () => this.playerUpgrades.ballSpeed *= 1.3
+                description: 'Increase ball speed by 15%',
+                available: () => true,
+                apply: () => this.playerUpgrades.ballSpeed *= 1.15
             },
             {
                 id: 'firerate',
                 name: 'Rapid Fire',
-                description: 'Increase fire rate by 30%',
-                apply: () => this.playerUpgrades.fireRate *= 1.3
+                description: 'Increase fire rate by 20%',
+                available: () => true,
+                apply: () => this.playerUpgrades.fireRate *= 1.2
             },
             {
                 id: 'multishot',
                 name: 'Multi-Shot',
-                description: 'Fire an additional ball',
+                description: 'Fire an additional ball (Max: 3 balls)',
+                available: () => this.playerUpgrades.multishot < 2, // Max 2 extra (3 total)
                 apply: () => this.playerUpgrades.multishot++
             },
             {
                 id: 'piercing',
                 name: 'Piercing Shots',
-                description: 'Balls pierce through 2 enemies',
-                apply: () => this.playerUpgrades.piercing += 2
+                description: 'Balls pierce through 1 more enemy (Max: 3)',
+                available: () => this.playerUpgrades.piercing < 3,
+                apply: () => this.playerUpgrades.piercing += 1
             },
             {
                 id: 'health',
                 name: 'Health Boost',
                 description: 'Increase max HP by 25 and heal fully',
+                available: () => true,
                 apply: () => {
                     this.maxHP += 25;
                     this.playerHP = this.maxHP;
                 }
             },
             {
+                id: 'movespeed',
+                name: 'Swift Stride',
+                description: 'Move 20% faster',
+                available: () => this.playerUpgrades.moveSpeed === undefined || this.playerUpgrades.moveSpeed < 1.6,
+                apply: () => {
+                    if (this.playerUpgrades.moveSpeed === undefined) {
+                        this.playerUpgrades.moveSpeed = 1.2;
+                    } else {
+                        this.playerUpgrades.moveSpeed *= 1.2;
+                    }
+                }
+            },
+            {
                 id: 'fireball',
                 name: 'Fire Ball Fusion',
                 description: 'Unlock fire balls that deal DoT',
+                available: () => this.player.ballType === 'normal',
                 apply: () => this.player.ballType = 'fire'
             },
             {
                 id: 'iceball',
                 name: 'Ice Ball Fusion',
                 description: 'Unlock ice balls that slow enemies',
+                available: () => this.player.ballType === 'normal',
                 apply: () => this.player.ballType = 'ice'
             },
             {
                 id: 'lightning',
                 name: 'Lightning Evolution',
                 description: 'Unlock lightning that chains to nearby enemies',
+                available: () => this.player.ballType === 'normal',
                 apply: () => this.player.ballType = 'lightning'
             },
             {
                 id: 'explosive',
                 name: 'Explosive Evolution',
                 description: 'Unlock explosive balls with AoE damage',
+                available: () => this.player.ballType === 'normal',
                 apply: () => this.player.ballType = 'explosive'
             },
         ];
 
+        // Filter to only available upgrades
+        const availableUpgrades = allUpgrades.filter(u => u.available());
+
         // Shuffle and pick random upgrades
-        const shuffled = allUpgrades.sort(() => 0.5 - Math.random());
-        return shuffled.slice(0, count);
+        const shuffled = availableUpgrades.sort(() => 0.5 - Math.random());
+        return shuffled.slice(0, Math.min(count, shuffled.length));
     }
 
     applyUpgrade(upgrade) {
@@ -883,8 +921,9 @@ class Player {
         if (dx !== 0 || dy !== 0) {
             this.isMoving = true;
             this.moveAngle = Math.atan2(dy, dx);
-            this.vx = dx * CONFIG.playerSpeed;
-            this.vy = dy * CONFIG.playerSpeed;
+            const moveSpeed = CONFIG.playerSpeed * (this.game.playerUpgrades.moveSpeed || 1);
+            this.vx = dx * moveSpeed;
+            this.vy = dy * moveSpeed;
         } else {
             this.isMoving = false;
         }
@@ -1004,11 +1043,14 @@ class Enemy {
         this.active = true;
 
         // Random enemy type with grid sizes
+        // Scale HP with both wave level and player level for balance
+        const levelScale = game.level + Math.floor(game.playerLevel * 0.5);
+
         const rand = Math.random();
         if (rand < 0.5) {
             // Small enemy - 1x1
             this.type = 'normal';
-            this.hp = 5 + game.level * 2;
+            this.hp = 5 + levelScale * 2;
             this.maxHP = this.hp;
             this.color = '#ff6b6b';
             this.speed = CONFIG.enemySpeed * 1.5;
@@ -1019,7 +1061,7 @@ class Enemy {
         } else if (rand < 0.75) {
             // Medium enemy - 2x1
             this.type = 'tank';
-            this.hp = 15 + game.level * 4;
+            this.hp = 15 + levelScale * 4;
             this.maxHP = this.hp;
             this.color = '#845EC2';
             this.speed = CONFIG.enemySpeed * 0.8;
@@ -1030,7 +1072,7 @@ class Enemy {
         } else if (rand < 0.9) {
             // Large enemy - 2x2
             this.type = 'heavy';
-            this.hp = 30 + game.level * 6;
+            this.hp = 30 + levelScale * 6;
             this.maxHP = this.hp;
             this.color = '#9b59b6';
             this.speed = CONFIG.enemySpeed * 0.5;
@@ -1041,7 +1083,7 @@ class Enemy {
         } else {
             // Extra large enemy - 3x2 or 4x2
             this.type = 'mega';
-            this.hp = 50 + game.level * 10;
+            this.hp = 50 + levelScale * 10;
             this.maxHP = this.hp;
             this.color = '#e74c3c';
             this.speed = CONFIG.enemySpeed * 0.4;
@@ -1206,22 +1248,6 @@ class Enemy {
                 ctx.fill();
             }
         }
-
-        // HP bar
-        const barWidth = width;
-        const barHeight = 5;
-        const hpPercent = this.hp / this.maxHP;
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(this.x - halfWidth, this.y - halfHeight - 8, barWidth, barHeight);
-
-        const hpColor = hpPercent > 0.5 ? '#00ff00' : hpPercent > 0.25 ? '#ffff00' : '#ff0000';
-        ctx.fillStyle = hpColor;
-        ctx.fillRect(this.x - halfWidth, this.y - halfHeight - 8, barWidth * hpPercent, barHeight);
-
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(this.x - halfWidth, this.y - halfHeight - 8, barWidth, barHeight);
 
         // Status effect indicators
         if (this.burning) {
